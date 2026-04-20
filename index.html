@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>物流比价系统</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f5f5f5; color: #1a1a1a; min-height: 100vh; }
+.header { background: #1a1a1a; color: #fff; padding: 16px 24px; display: flex; align-items: center; gap: 12px; }
+.header h1 { font-size: 17px; font-weight: 500; }
+.header a { margin-left: auto; font-size: 12px; color: #888; text-decoration: none; }
+.header a:hover { color: #ccc; }
+.main { max-width: 900px; margin: 0 auto; padding: 24px 16px; }
+.card { background: #fff; border-radius: 12px; border: 1px solid #e8e8e8; padding: 20px 24px; margin-bottom: 16px; }
+.card-title { font-size: 12px; font-weight: 500; color: #999; margin-bottom: 14px; letter-spacing: 0.5px; text-transform: uppercase; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 12px; align-items: end; }
+.field label { display: block; font-size: 12px; color: #888; margin-bottom: 6px; }
+.field input, .field select { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; color: #1a1a1a; background: #fff; outline: none; transition: border-color 0.15s; }
+.field input:focus, .field select:focus { border-color: #1a1a1a; }
+.autocomplete-wrap { position: relative; }
+.ac-list { position: absolute; top: 100%; left: 0; right: 0; background: #fff; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.10); z-index: 999; max-height: 220px; overflow-y: auto; margin-top: 4px; }
+.ac-item { padding: 9px 14px; font-size: 14px; cursor: pointer; }
+.ac-item:hover, .ac-item.active { background: #f5f5f5; }
+.ac-item mark { background: none; color: #1a56db; font-weight: 500; }
+.btn { padding: 10px 24px; background: #1a1a1a; color: #fff; border: none; border-radius: 8px; font-size: 14px; cursor: pointer; white-space: nowrap; }
+.btn:hover { background: #333; }
+.hint { font-size: 12px; color: #bbb; margin-top: 8px; }
+.update-info { font-size: 12px; color: #aaa; margin-top: 6px; }
+.result-item { border: 1px solid #e8e8e8; border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 16px; }
+.result-item.best { border-color: #22c55e; border-width: 1.5px; background: #f0fdf4; }
+.result-item.second { border-color: #f59e0b; border-width: 1.5px; background: #fffbeb; }
+.ch-name { font-size: 15px; font-weight: 500; }
+.ch-meta { font-size: 12px; color: #999; margin-top: 4px; display: flex; gap: 10px; flex-wrap: wrap; }
+.price-total { font-size: 22px; font-weight: 600; text-align: right; }
+.price-sub { font-size: 11px; color: #aaa; text-align: right; margin-top: 2px; }
+.badge { display: inline-block; border-radius: 4px; font-size: 11px; padding: 2px 7px; margin-left: 6px; }
+.badge.green { background: #22c55e; color: #fff; }
+.badge.amber { background: #f59e0b; color: #fff; }
+.supplier-tag { background: #f1f5f9; color: #64748b; border-radius: 4px; padding: 1px 6px; font-size: 11px; }
+.no-result { text-align: center; padding: 40px; color: #aaa; font-size: 14px; }
+.results-hd { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.results-hd h2 { font-size: 15px; font-weight: 500; }
+.count-badge { background: #eff6ff; color: #1d4ed8; border-radius: 20px; padding: 3px 10px; font-size: 12px; }
+.loading { text-align: center; padding: 20px; color: #aaa; font-size: 13px; }
+@media(max-width:640px){ .form-grid { grid-template-columns: 1fr 1fr; } .form-grid .btn { grid-column: 1/-1; } }
+</style>
+</head>
+<body>
+<div class="header">
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 3h15v13H1z"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+  <h1>物流比价系统</h1>
+  <a href="/admin/">管理后台</a>
+</div>
+<div class="main">
+  <div class="card">
+    <div class="card-title">查询最优渠道</div>
+    <div class="form-grid">
+      <div class="field">
+        <label>目的国家</label>
+        <div class="autocomplete-wrap">
+          <input type="text" id="country-input" placeholder="输入国家，如：美国" autocomplete="off" oninput="onInput()" onkeydown="onKey(event)" onfocus="onInput()">
+          <div class="ac-list" id="ac-list" style="display:none"></div>
+        </div>
+      </div>
+      <div class="field">
+        <label>货物重量（KG）</label>
+        <input type="number" id="weight" placeholder="如：0.5" step="0.001" min="0.001">
+      </div>
+      <div class="field">
+        <label>货物类型（可选）</label>
+        <select id="type-filter">
+          <option value="">全部渠道</option>
+          <option value="普货">普货</option>
+          <option value="带电">带电 / 含电</option>
+          <option value="特货">特货 / 敏感</option>
+          <option value="化妆品">化妆品</option>
+        </select>
+      </div>
+      <button class="btn" onclick="search()">查询比价</button>
+    </div>
+    <div class="hint">总费用 = 运费(元/kg) × 重量 + 挂号费(元/票)</div>
+    <div class="update-info" id="update-info"></div>
+  </div>
+  <div id="results-card" style="display:none" class="card">
+    <div class="results-hd">
+      <h2 id="results-title"></h2>
+      <span class="count-badge" id="count-badge"></span>
+    </div>
+    <div id="results-list"></div>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>
+const SUPABASE_URL = 'https://wdezuklynozxxbpzhkud.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndkZXp1a2x5bm96eHhicHpoa3VkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY2NjMzOTIsImV4cCI6MjA5MjIzOTM5Mn0.Tyoni99mIfRXVu0CBWEOPyCOGP9gk-tLG_BqrbnHCUg';
+
+const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+let allCountries = [];
+let acIdx = -1;
+
+async function init() {
+  try {
+    const { data } = await db.from('logistics_prices').select('country').order('country');
+    allCountries = [...new Set(data.map(r => r.country))].sort();
+    const { data: meta } = await db.from('logistics_meta').select('updated_at').order('updated_at', {ascending:false}).limit(1);
+    if (meta && meta.length) {
+      const d = new Date(meta[0].updated_at);
+      document.getElementById('update-info').textContent = `报价更新时间：${d.toLocaleDateString('zh-CN')} ${d.toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'})}`;
+    }
+  } catch(e) { console.error(e); }
+}
+
+function onInput() {
+  const val = document.getElementById('country-input').value.trim();
+  const list = document.getElementById('ac-list');
+  acIdx = -1;
+  if (!allCountries.length) { list.style.display='none'; return; }
+  const filtered = val ? allCountries.filter(c => c.includes(val)) : allCountries;
+  if (!filtered.length) { list.style.display='none'; return; }
+  list.innerHTML = filtered.slice(0,30).map((c,i) => {
+    const hi = val ? c.replace(val, `<mark>${val}</mark>`) : c;
+    return `<div class="ac-item" data-val="${c}" onmousedown="pick('${c}')">${hi}</div>`;
+  }).join('');
+  list.style.display = 'block';
+}
+
+function onKey(e) {
+  const items = document.querySelectorAll('.ac-item');
+  if (e.key === 'ArrowDown') { e.preventDefault(); acIdx = Math.min(acIdx+1, items.length-1); items.forEach((el,i) => el.classList.toggle('active', i===acIdx)); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); acIdx = Math.max(acIdx-1, 0); items.forEach((el,i) => el.classList.toggle('active', i===acIdx)); }
+  else if (e.key === 'Enter') { if (acIdx>=0 && items[acIdx]) pick(items[acIdx].dataset.val); else { document.getElementById('ac-list').style.display='none'; search(); } }
+  else if (e.key === 'Escape') document.getElementById('ac-list').style.display='none';
+}
+
+function pick(val) {
+  document.getElementById('country-input').value = val;
+  document.getElementById('ac-list').style.display = 'none';
+  document.getElementById('weight').focus();
+}
+
+document.addEventListener('click', e => { if (!e.target.closest('.autocomplete-wrap')) document.getElementById('ac-list').style.display='none'; });
+document.getElementById('weight').addEventListener('keypress', e => { if (e.key==='Enter') search(); });
+
+async function search() {
+  const country = document.getElementById('country-input').value.trim();
+  const weight = parseFloat(document.getElementById('weight').value);
+  const typeFilter = document.getElementById('type-filter').value;
+  if (!country) { alert('请输入目的国家'); return; }
+  if (!weight || weight <= 0) { alert('请输入正确的货物重量'); return; }
+
+  document.getElementById('results-card').style.display = 'block';
+  document.getElementById('results-list').innerHTML = '<div class="loading">查询中...</div>';
+
+  try {
+    const { data, error } = await db.from('logistics_prices')
+      .select('*')
+      .eq('country', country)
+      .lt('weight_min', weight)
+      .gte('weight_max', weight);
+    if (error) throw error;
+    let results = data;
+    if (typeFilter) {
+      results = results.filter(r => {
+        const ch = r.channel;
+        if (typeFilter==='普货') return !ch.includes('带电') && !ch.includes('含电') && !ch.includes('特货') && !ch.includes('敏感') && !ch.includes('化妆品');
+        if (typeFilter==='带电') return ch.includes('带电') || ch.includes('含电') || ch.includes('电');
+        if (typeFilter==='特货') return ch.includes('特货') || ch.includes('敏感') || ch.includes('特敏');
+        if (typeFilter==='化妆品') return ch.includes('化妆品') || ch.includes('美妆');
+        return true;
+      });
+    }
+    const seen = new Set();
+    results = results.filter(r => { const k=`${r.supplier}_${r.channel}`; if(seen.has(k)) return false; seen.add(k); return true; });
+    results = results.map(r => ({ ...r, total: parseFloat((r.freight_per_kg * weight + r.handling_fee).toFixed(2)) })).sort((a,b) => a.total - b.total);
+    renderResults(results, country, weight);
+  } catch(e) {
+    document.getElementById('results-list').innerHTML = '<div class="no-result">查询失败：' + e.message + '</div>';
+  }
+}
+
+function renderResults(results, country, weight) {
+  document.getElementById('results-title').textContent = `${country} · ${weight}kg 比价结果`;
+  document.getElementById('count-badge').textContent = `${results.length} 个渠道`;
+  if (!results.length) { document.getElementById('results-list').innerHTML = '<div class="no-result">未找到匹配渠道，请检查国家名称或重量</div>'; return; }
+  document.getElementById('results-list').innerHTML = results.map((r,i) => {
+    const cls = i===0 ? 'result-item best' : i===1 ? 'result-item second' : 'result-item';
+    const badge = i===0 ? '<span class="badge green">最优价</span>' : i===1 ? '<span class="badge amber">次选</span>' : '';
+    const saving = i>0 ? `比最优贵 ¥${(r.total-results[0].total).toFixed(2)}` : '';
+    return `<div class="${cls}">
+      <div>
+        <div class="ch-name">${r.channel}${badge} <span class="supplier-tag">${r.supplier}</span></div>
+        <div class="ch-meta">
+          <span>运费 ¥${r.freight_per_kg}/kg</span>
+          <span>挂号费 ¥${r.handling_fee}/票</span>
+          <span>重量段 ${r.weight_min}~${r.weight_max}kg</span>
+          ${saving ? `<span style="color:#f59e0b">${saving}</span>` : ''}
+        </div>
+      </div>
+      <div>
+        <div class="price-total">¥${r.total.toFixed(2)}</div>
+        <div class="price-sub">${r.freight_per_kg}×${weight}+${r.handling_fee}</div>
+      </div>
+    </div>`;
+  }).join('');
+  document.getElementById('results-card').scrollIntoView({ behavior:'smooth', block:'nearest' });
+}
+
+init();
+</script>
+</body>
+</html>

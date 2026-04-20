@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>管理后台 — 物流比价系统</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f5f5f5; color: #1a1a1a; min-height: 100vh; }
+.header { background: #1a1a1a; color: #fff; padding: 16px 24px; display: flex; align-items: center; gap: 12px; }
+.header h1 { font-size: 17px; font-weight: 500; }
+.header a { margin-left: auto; font-size: 12px; color: #888; text-decoration: none; }
+.header a:hover { color: #ccc; }
+.main { max-width: 800px; margin: 0 auto; padding: 24px 16px; }
+.card { background: #fff; border-radius: 12px; border: 1px solid #e8e8e8; padding: 20px 24px; margin-bottom: 16px; }
+.card-title { font-size: 12px; font-weight: 500; color: #999; margin-bottom: 14px; letter-spacing: 0.5px; text-transform: uppercase; }
+.login-wrap { max-width: 360px; margin: 80px auto; background: #fff; border-radius: 12px; border: 1px solid #e8e8e8; padding: 32px; }
+.login-wrap h2 { font-size: 18px; font-weight: 500; margin-bottom: 20px; }
+input[type=password], input[type=text] { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; outline: none; margin-bottom: 12px; }
+input:focus { border-color: #1a1a1a; }
+.btn { padding: 10px 20px; background: #1a1a1a; color: #fff; border: none; border-radius: 8px; font-size: 14px; cursor: pointer; width: 100%; }
+.btn:hover { background: #333; }
+.btn-sm { padding: 8px 16px; background: #1a1a1a; color: #fff; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; }
+.btn-sm:hover { background: #333; }
+.btn-danger { background: #ef4444; }
+.btn-danger:hover { background: #dc2626; }
+.upload-zone { border: 1.5px dashed #ddd; border-radius: 10px; padding: 24px; text-align: center; cursor: pointer; transition: border-color 0.2s; }
+.upload-zone:hover { border-color: #999; }
+.upload-zone p { font-size: 13px; color: #aaa; margin-top: 6px; }
+input[type=file] { display: none; }
+.file-list { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.file-item { display: flex; align-items: center; gap: 10px; background: #f8f8f8; border-radius: 8px; padding: 10px 14px; font-size: 13px; }
+.file-item .name { flex: 1; color: #555; }
+.file-item .count { color: #888; font-size: 12px; }
+.file-item .remove { background: none; border: none; color: #ccc; cursor: pointer; font-size: 16px; line-height: 1; }
+.file-item .remove:hover { color: #ef4444; }
+.progress-wrap { margin-top: 14px; }
+.progress-bar { height: 6px; background: #e8e8e8; border-radius: 3px; overflow: hidden; }
+.progress-fill { height: 100%; background: #22c55e; border-radius: 3px; transition: width 0.3s; }
+.progress-text { font-size: 12px; color: #888; margin-top: 6px; }
+.status-log { background: #f8f8f8; border-radius: 8px; padding: 12px 14px; font-size: 12px; color: #666; max-height: 160px; overflow-y: auto; margin-top: 12px; font-family: monospace; line-height: 1.8; }
+.status-log .ok { color: #16a34a; }
+.status-log .err { color: #ef4444; }
+.suppliers-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.suppliers-table th { text-align: left; padding: 8px 12px; border-bottom: 1px solid #e8e8e8; color: #888; font-weight: 400; font-size: 12px; }
+.suppliers-table td { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; }
+.suppliers-table tr:last-child td { border-bottom: none; }
+.tag { background: #f1f5f9; color: #475569; border-radius: 4px; padding: 2px 8px; font-size: 11px; }
+.err-msg { color: #ef4444; font-size: 13px; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<!-- 登录界面 -->
+<div id="login-screen">
+  <div class="login-wrap">
+    <h2>管理后台登录</h2>
+    <input type="password" id="pwd-input" placeholder="请输入管理密码" onkeypress="if(event.key==='Enter')login()">
+    <div class="err-msg" id="login-err"></div>
+    <br>
+    <button class="btn" onclick="login()">登录</button>
+  </div>
+</div>
+
+<!-- 管理主界面 -->
+<div id="admin-screen" style="display:none">
+  <div class="header">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 3h15v13H1z"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+    <h1>管理后台</h1>
+    <a href="/">返回查询页</a>
+  </div>
+  <div class="main">
+
+    <!-- 上传新报价表 -->
+    <div class="card">
+      <div class="card-title">上传新报价表</div>
+      <div class="upload-zone" onclick="document.getElementById('file-input').click()" id="drop-zone">
+        <input type="file" id="file-input" accept=".xlsx,.xls" multiple>
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <strong style="font-size:14px;color:#555">点击或拖入 Excel 报价表</strong>
+        <p>支持 .xlsx / .xls，可同时上传多个文件</p>
+      </div>
+      <div class="file-list" id="file-list"></div>
+      <div id="progress-wrap" style="display:none" class="progress-wrap">
+        <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+        <div class="progress-text" id="progress-text">准备中...</div>
+      </div>
+      <div class="status-log" id="status-log" style="display:none"></div>
+      <br>
+      <button class="btn-sm" onclick="uploadAll()" id="upload-btn" style="display:none">确认上传并更新数据库</button>
+    </div>
+
+    <!-- 当前供应商数据 -->
+    <div class="card">
+      <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+        <span>当前数据库</span>
+        <button class="btn-sm btn-danger" onclick="clearAll()">清空全部数据</button>
+      </div>
+      <div id="suppliers-info"><div style="color:#aaa;font-size:13px">加载中...</div></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const SUPABASE_URL = 'https://wdezuklynozxxbpzhkud.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndkZXp1a2x5bm96eHhicHpoa3VkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY2NjMzOTIsImV4cCI6MjA5MjIzOTM5Mn0.Tyoni99mIfRXVu0CBWEOPyCOGP9gk-tLG_BqrbnHCUg';
+const ADMIN_PASSWORD = 'bajiaoxing866.23';
+
+let pendingFiles = [];
+let db;
+
+function initDB() {
+  db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+}
+
+function login() {
+  const pwd = document.getElementById('pwd-input').value;
+  if (pwd === ADMIN_PASSWORD) {
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('admin-screen').style.display = 'block';
+    initDB();
+    loadStats();
+  } else {
+    document.getElementById('login-err').textContent = '密码错误';
+  }
+}
+
+async function loadStats() {
+  try {
+    const { data, error } = await db.from('logistics_prices').select('supplier,channel,country').order('supplier');
+    if (error) throw error;
+    const stats = {};
+    data.forEach(r => {
+      if (!stats[r.supplier]) stats[r.supplier] = { channels: new Set(), countries: new Set(), count: 0 };
+      stats[r.supplier].channels.add(r.channel);
+      stats[r.supplier].countries.add(r.country);
+      stats[r.supplier].count++;
+    });
+    const { data: meta } = await db.from('logistics_meta').select('*').order('updated_at', {ascending:false}).limit(5);
+    let html = '';
+    if (Object.keys(stats).length === 0) {
+      html = '<div style="color:#aaa;font-size:13px;padding:8px 0">暂无数据，请上传报价表</div>';
+    } else {
+      html = `<table class="suppliers-table"><tr><th>供应商</th><th>渠道数</th><th>国家数</th><th>价格记录</th><th>操作</th></tr>`;
+      for (const [sup, s] of Object.entries(stats)) {
+        html += `<tr><td><strong>${sup}</strong></td><td>${s.channels.size}</td><td>${s.countries.size}</td><td>${s.count} 条</td><td><button class="btn-sm btn-danger" style="padding:4px 10px;font-size:11px" onclick="clearSupplier('${sup}')">删除</button></td></tr>`;
+      }
+      html += '</table>';
+      if (meta && meta.length) {
+        const d = new Date(meta[0].updated_at);
+        html += `<div style="font-size:12px;color:#aaa;margin-top:10px">最近更新：${d.toLocaleString('zh-CN')}</div>`;
+      }
+    }
+    document.getElementById('suppliers-info').innerHTML = html;
+  } catch(e) {
+    document.getElementById('suppliers-info').innerHTML = '<div style="color:#ef4444;font-size:13px">加载失败：' + e.message + '</div>';
+  }
+}
+
+// ===== 文件解析（同前端逻辑）=====
+function parseWeightRange(s) {
+  if (!s || typeof s !== 'string') return null;
+  const nums = s.match(/\d+\.?\d*/g);
+  if (!nums || nums.length < 2) return null;
+  return { min: parseFloat(nums[0]), max: parseFloat(nums[1]) };
+}
+
+function parseYuanpeng(data, sheetName) {
+  const records = []; let currentCountry = null;
+  for (const row of data) {
+    const vals = row.map(v => v!=null ? String(v).trim() : '');
+    const country = vals[1]||'', weightStr=vals[2]||'', freightStr=vals[3]||'', feeStr=vals[4]||'';
+    if (country && country!=='国家' && country.length<15 && !['nan','undefined','null'].includes(country.toLowerCase())) currentCountry=country;
+    const w = parseWeightRange(weightStr);
+    if (!w) continue;
+    const fN = freightStr.match(/\d+\.?\d*/); if (!fN) continue;
+    const freight=parseFloat(fN[0]), feeN=feeStr.match(/\d+\.?\d*/), fee=feeN?parseFloat(feeN[0]):0;
+    if (freight>0 && currentCountry) records.push({supplier:'远朋供应链',channel:sheetName,country:currentCountry,weight_min:w.min,weight_max:w.max,freight_per_kg:freight,handling_fee:fee});
+  }
+  return records;
+}
+
+function parseStandard(data, sheetName, supplierName) {
+  const records=[]; let headerRow=-1, cC=-1, cW=-1, cF=-1, cFee=-1;
+  for (let i=0;i<Math.min(data.length,15);i++) {
+    const vals=data[i].map(v=>v!=null?String(v).trim():'');
+    const j=vals.join(' ');
+    if ((j.includes('国家')||j.includes('国家/地区'))&&(j.includes('重量')||j.includes('公斤重')||j.includes('运费'))) {
+      headerRow=i;
+      vals.forEach((v,k)=>{
+        if ((v.includes('国家')||v.includes('国家/地区'))&&cC===-1) cC=k;
+        if ((v.includes('重量')&&v.toUpperCase().includes('KG')||v.includes('重量段'))&&cW===-1) cW=k;
+        if (v.includes('运费')&&cF===-1) cF=k;
+        if (v.includes('公斤重')&&cF===-1) cF=k;
+        if ((v.includes('挂号费')||v.includes('操作费'))&&cFee===-1) cFee=k;
+      }); break;
+    }
+  }
+  if (headerRow===-1||cF===-1) return [];
+  let cur=null;
+  for (let i=headerRow+1;i<data.length;i++) {
+    const vals=data[i].map(v=>v!=null?String(v).trim():'');
+    if (cC!==-1){const cv=vals[cC]||'';if(cv&&cv.length<16&&!['注','说明','计费','服务','包裹'].some(x=>cv.includes(x)))if(cv&&!['nan','undefined'].includes(cv.toLowerCase()))cur=cv;}
+    const wStr=cW!==-1?(vals[cW]||''):'', fStr=vals[cF]||'';
+    const w=parseWeightRange(wStr); if(!w) continue;
+    const fN=fStr.match(/^\d+\.?\d*$/)? [fStr] : fStr.match(/\d+\.?\d*/g); if(!fN) continue;
+    const freight=parseFloat(fN[0]); if(!freight||freight<=0||!cur) continue;
+    let fee=0; if(cFee!==-1){const fn=(vals[cFee]||'').match(/\d+/);if(fn)fee=parseFloat(fn[0]);}
+    records.push({supplier:supplierName,channel:sheetName,country:cur,weight_min:w.min,weight_max:w.max,freight_per_kg:freight,handling_fee:fee});
+  }
+  return records;
+}
+
+function detectSupplier(filename, sheetNames) {
+  const fn=filename.toLowerCase(), all=sheetNames.join(' ');
+  if (fn.includes('远朋')||fn.includes('yuanpeng')) return '远朋供应链';
+  if (fn.includes('万邦')||fn.includes('wanbang')) return '万邦速达';
+  if (fn.includes('云途')||fn.includes('yuntu')||fn.includes('cn25753')||fn.includes('王淑华')) return '云途物流';
+  if (all.includes('普货小包')) return '远朋供应链';
+  if (all.includes('万邦')) return '万邦速达';
+  if (all.includes('云途')) return '云途物流';
+  return filename.split('.')[0].substring(0,10);
+}
+
+function parseExcel(file) {
+  return new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const wb = XLSX.read(e.target.result, {type:'array'});
+        const supplier = detectSupplier(file.name, wb.SheetNames);
+        const skip = new Set(['目录','报价总目录','目录国家维度','总目录','寄件须知','货物交接要求','托运条款']);
+        let records = [];
+        for (const sh of wb.SheetNames) {
+          if (skip.has(sh)) continue;
+          const ws = wb.Sheets[sh];
+          const data = XLSX.utils.sheet_to_json(ws, {header:1, defval:null});
+          if (!data||data.length<5) continue;
+          const r = supplier==='远朋供应链' ? parseYuanpeng(data,sh) : parseStandard(data,sh,supplier);
+          records = records.concat(r);
+        }
+        resolve({supplier, records, filename:file.name, ok:true});
+      } catch(err) {
+        resolve({supplier:file.name, records:[], filename:file.name, ok:false, err:err.message});
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+// 文件选择
+document.getElementById('file-input').addEventListener('change', async function(e) {
+  const files = Array.from(e.target.files);
+  for (const f of files) {
+    if (pendingFiles.find(p=>p.filename===f.name)) continue;
+    const result = await parseExcel(f);
+    pendingFiles.push(result);
+  }
+  renderFileList();
+  this.value='';
+});
+
+const dz = document.getElementById('drop-zone');
+dz.addEventListener('dragover', e=>{e.preventDefault();dz.style.borderColor='#1a1a1a';});
+dz.addEventListener('dragleave', ()=>dz.style.borderColor='#ddd');
+dz.addEventListener('drop', e=>{
+  e.preventDefault(); dz.style.borderColor='#ddd';
+  const files=Array.from(e.dataTransfer.files).filter(f=>f.name.match(/\.(xlsx|xls)$/i));
+  if(files.length){const dt=new DataTransfer();files.forEach(f=>dt.items.add(f));document.getElementById('file-input').files=dt.files;document.getElementById('file-input').dispatchEvent(new Event('change'));}
+});
+
+function renderFileList() {
+  const container = document.getElementById('file-list');
+  container.innerHTML = pendingFiles.map((f,i)=>`
+    <div class="file-item">
+      <span>${f.ok?'✅':'❌'}</span>
+      <span class="name">${f.filename}</span>
+      <span class="tag">${f.supplier}</span>
+      <span class="count">${f.records.length} 条记录</span>
+      <button class="remove" onclick="removePending(${i})">×</button>
+    </div>`).join('');
+  document.getElementById('upload-btn').style.display = pendingFiles.length>0 ? 'inline-block' : 'none';
+}
+
+function removePending(i) { pendingFiles.splice(i,1); renderFileList(); }
+
+async function uploadAll() {
+  if (!pendingFiles.length) return;
+  const allRecords = pendingFiles.flatMap(f=>f.records);
+  if (!allRecords.length) { alert('没有可上传的数据'); return; }
+
+  document.getElementById('progress-wrap').style.display='block';
+  document.getElementById('status-log').style.display='block';
+  document.getElementById('upload-btn').disabled=true;
+  const log = document.getElementById('status-log');
+  log.innerHTML='';
+
+  const addLog = (msg, ok=true) => { log.innerHTML += `<div class="${ok?'ok':'err'}">${msg}</div>`; log.scrollTop=log.scrollHeight; };
+
+  try {
+    const suppliers = [...new Set(pendingFiles.map(f=>f.supplier))];
+    for (const sup of suppliers) {
+      addLog(`🗑 删除旧数据：${sup}...`);
+      const { error } = await db.from('logistics_prices').delete().eq('supplier', sup);
+      if (error) throw error;
+    }
+
+    const batchSize = 500;
+    let done = 0;
+    for (let i=0; i<allRecords.length; i+=batchSize) {
+      const batch = allRecords.slice(i, i+batchSize);
+      const { error } = await db.from('logistics_prices').insert(batch);
+      if (error) throw error;
+      done += batch.length;
+      const pct = Math.round(done/allRecords.length*100);
+      document.getElementById('progress-fill').style.width=pct+'%';
+      document.getElementById('progress-text').textContent=`已上传 ${done} / ${allRecords.length} 条...`;
+    }
+
+    await db.from('logistics_meta').insert({updated_at: new Date().toISOString(), note: suppliers.join(', ')});
+
+    addLog(`✅ 上传完成！共 ${allRecords.length} 条价格记录`);
+    document.getElementById('progress-text').textContent='上传完成！';
+    pendingFiles=[];
+    renderFileList();
+    setTimeout(loadStats, 500);
+  } catch(e) {
+    addLog('❌ 上传失败：'+e.message, false);
+  }
+  document.getElementById('upload-btn').disabled=false;
+}
+
+async function clearSupplier(supplier) {
+  if (!confirm(`确认删除 ${supplier} 的所有数据？`)) return;
+  try {
+    const { error } = await db.from('logistics_prices').delete().eq('supplier', supplier);
+    if (error) throw error;
+    loadStats();
+  } catch(e) { alert('删除失败：'+e.message); }
+}
+
+async function clearAll() {
+  if (!confirm('确认清空全部价格数据？此操作不可恢复！')) return;
+  try {
+    await db.from('logistics_prices').delete().gte('id', 0);
+    await db.from('logistics_meta').delete().gte('id', 0);
+    loadStats();
+  } catch(e) { alert('清空失败：'+e.message); }
+}
+</script>
+</body>
+</html>
