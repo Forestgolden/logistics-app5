@@ -160,69 +160,208 @@ async function loadStats() {
   }
 }
 
-// ===== 文件解析（同前端逻辑）=====
+// ===== 精准解析器 v2 =====
+
+// 解析重量区间，支持所有格式：远朋(0.05≤W≤0.1) / 云途(0＜W≤0.1) / 万邦(0.101-0.2KG)
 function parseWeightRange(s) {
   if (!s || typeof s !== 'string') return null;
-  const nums = s.match(/\d+\.?\d*/g);
+  // 去掉KG单位和W字符，数字和小数点保留
+  const clean = s.replace(/KG/gi,'').replace(/W/gi,'').trim();
+  const nums = clean.match(/\d+\.?\d*/g);
   if (!nums || nums.length < 2) return null;
-  return { min: parseFloat(nums[0]), max: parseFloat(nums[1]) };
+  const min = parseFloat(nums[0]);
+  const max = parseFloat(nums[1]);
+  if (isNaN(min) || isNaN(max) || max <= 0) return null;
+  return { min, max };
 }
 
+// 判断是否为合法国家名（排除价格、说明、表头等干扰行）
+function isValidCountry(s) {
+  if (!s || s.length === 0 || s.length > 20) return false;
+  // 排除含有数字+单位的价格行
+  if (/\d+\s*(RMB|元|kg|KG|票|\/)/i.test(s)) return false;
+  // 排除明显的表头或说明
+  const blacklist = ['国家','地区','说明','注意','计费','备注','渠道','产品','重量','运费','挂号','服务','合计','小计','nan','undefined','null'];
+  if (blacklist.some(b => s.includes(b))) return false;
+  return true;
+}
+
+// ── 远朋解析器 ──
+// 格式：col1=国家(合并单元格向下填充), col2=重量区间, col3=运费/KG, col4=挂号费/票
 function parseYuanpeng(data, sheetName) {
-  const records = []; let currentCountry = null;
-  for (const row of data) {
-    const vals = row.map(v => v!=null ? String(v).trim() : '');
-    const country = vals[1]||'', weightStr=vals[2]||'', freightStr=vals[3]||'', feeStr=vals[4]||'';
-    if (country && country!=='国家' && country.length<15 && !['nan','undefined','null'].includes(country.toLowerCase())) currentCountry=country;
-    const w = parseWeightRange(weightStr);
+  const records = [];
+  let currentCountry = null;
+  // 找数据起始行（跳过标题行，找到国家列有内容的行）
+  let startRow = 0;
+  for (let i = 0; i < Math.min(data.length, 10); i++) {
+    const v = data[i] && data[i][1] ? String(data[i][1]).trim() : '';
+    if (v === '国家') { startRow = i + 1; break; }
+  }
+  for (let i = startRow; i < data.length; i++) {
+    const row = data[i] || [];
+    const c1 = row[1] != null ? String(row[1]).trim() : '';
+    const c2 = row[2] != null ? String(row[2]).trim() : '';
+    const c3 = row[3] != null ? String(row[3]).trim() : '';
+    const c4 = row[4] != null ? String(row[4]).trim() : '';
+    // 更新当前国家（合并单元格效果）
+    if (isValidCountry(c1)) currentCountry = c1;
+    if (!currentCountry) continue;
+    const w = parseWeightRange(c2);
     if (!w) continue;
-    const fN = freightStr.match(/\d+\.?\d*/); if (!fN) continue;
-    const freight=parseFloat(fN[0]), feeN=feeStr.match(/\d+\.?\d*/), fee=feeN?parseFloat(feeN[0]):0;
-    if (freight>0 && currentCountry) records.push({supplier:'远朋供应链',channel:sheetName,country:currentCountry,weight_min:w.min,weight_max:w.max,freight_per_kg:freight,handling_fee:fee});
+    const freightMatch = c3.match(/^\d+\.?\d*$/);
+    if (!freightMatch) continue;
+    const freight = parseFloat(c3);
+    if (!freight || freight <= 0) continue;
+    const feeMatch = c4.match(/^\d+\.?\d*$/);
+    const fee = feeMatch ? parseFloat(c4) : 0;
+    records.push({
+      supplier: '远朋供应链', channel: sheetName, country: currentCountry,
+      weight_min: w.min, weight_max: w.max, freight_per_kg: freight, handling_fee: fee
+    });
   }
   return records;
 }
 
-function parseStandard(data, sheetName, supplierName) {
-  const records=[]; let headerRow=-1, cC=-1, cW=-1, cF=-1, cFee=-1;
-  for (let i=0;i<Math.min(data.length,15);i++) {
-    const vals=data[i].map(v=>v!=null?String(v).trim():'');
-    const j=vals.join(' ');
-    if ((j.includes('国家')||j.includes('国家/地区'))&&(j.includes('重量')||j.includes('公斤重')||j.includes('运费'))) {
-      headerRow=i;
-      vals.forEach((v,k)=>{
-        if ((v.includes('国家')||v.includes('国家/地区'))&&cC===-1) cC=k;
-        if ((v.includes('重量')&&v.toUpperCase().includes('KG')||v.includes('重量段'))&&cW===-1) cW=k;
-        if (v.includes('运费')&&cF===-1) cF=k;
-        if (v.includes('公斤重')&&cF===-1) cF=k;
-        if ((v.includes('挂号费')||v.includes('操作费'))&&cFee===-1) cFee=k;
-      }); break;
+// ── 云途解析器 ──
+// 格式：col1=国家/地区, col4=重量(KG), col7=运费(RMB/KG), col8=挂号费(RMB/票)
+// 表头在第4行(index=3)
+function parseYuntu(data, sheetName, supplierName) {
+  const records = [];
+  let currentCountry = null;
+  // 找表头行（含"国家"和"运费"）
+  let headerRow = -1;
+  for (let i = 0; i < Math.min(data.length, 8); i++) {
+    const row = data[i] || [];
+    const joined = row.map(v => v != null ? String(v) : '').join(' ');
+    if (joined.includes('国家') && joined.includes('运费')) {
+      headerRow = i; break;
     }
   }
-  if (headerRow===-1||cF===-1) return [];
-  let cur=null;
-  for (let i=headerRow+1;i<data.length;i++) {
-    const vals=data[i].map(v=>v!=null?String(v).trim():'');
-    if (cC!==-1){const cv=vals[cC]||'';if(cv&&cv.length<16&&!['注','说明','计费','服务','包裹'].some(x=>cv.includes(x)))if(cv&&!['nan','undefined'].includes(cv.toLowerCase()))cur=cv;}
-    const wStr=cW!==-1?(vals[cW]||''):'', fStr=vals[cF]||'';
-    const w=parseWeightRange(wStr); if(!w) continue;
-    const fN=fStr.match(/^\d+\.?\d*$/)? [fStr] : fStr.match(/\d+\.?\d*/g); if(!fN) continue;
-    const freight=parseFloat(fN[0]); if(!freight||freight<=0||!cur) continue;
-    let fee=0; if(cFee!==-1){const fn=(vals[cFee]||'').match(/\d+/);if(fn)fee=parseFloat(fn[0]);}
-    records.push({supplier:supplierName,channel:sheetName,country:cur,weight_min:w.min,weight_max:w.max,freight_per_kg:freight,handling_fee:fee});
+  if (headerRow === -1) return [];
+  // 找各列位置
+  const hrow = data[headerRow].map(v => v != null ? String(v).trim() : '');
+  let cCountry=-1, cWeight=-1, cFreight=-1, cFee=-1;
+  hrow.forEach((v, i) => {
+    if ((v.includes('国家') || v.includes('地区')) && cCountry === -1) cCountry = i;
+    if (v.includes('重量') && cWeight === -1) cWeight = i;
+    if (v.includes('运费') && cFreight === -1) cFreight = i;
+    if (v.includes('挂号费') && cFee === -1) cFee = i;
+  });
+  if (cFreight === -1) return [];
+  for (let i = headerRow + 1; i < data.length; i++) {
+    const row = data[i] || [];
+    const country = cCountry >= 0 && row[cCountry] != null ? String(row[cCountry]).trim() : '';
+    const weightStr = cWeight >= 0 && row[cWeight] != null ? String(row[cWeight]).trim() : '';
+    const freightStr = row[cFreight] != null ? String(row[cFreight]).trim() : '';
+    const feeStr = cFee >= 0 && row[cFee] != null ? String(row[cFee]).trim() : '';
+    if (isValidCountry(country)) currentCountry = country;
+    if (!currentCountry) continue;
+    const w = parseWeightRange(weightStr);
+    if (!w) continue;
+    const freightNum = freightStr.match(/^\d+\.?\d*$/);
+    if (!freightNum) continue;
+    const freight = parseFloat(freightStr);
+    if (!freight || freight <= 0) continue;
+    const feeNum = feeStr.match(/^\d+\.?\d*$/);
+    const fee = feeNum ? parseFloat(feeStr) : 0;
+    records.push({
+      supplier: supplierName, channel: sheetName, country: currentCountry,
+      weight_min: w.min, weight_max: w.max, freight_per_kg: freight, handling_fee: fee
+    });
   }
   return records;
 }
 
+// ── 万邦解析器 ──
+// 格式：col1=国家, col2=产品名称(渠道), col6=重量段, col7=公斤重(RMB/KG), col8=操作费(RMB/PCS)
+// 表头在第5行(index=4)，国家和产品名称都是合并单元格向下填充
+function parseWanbang(data, sheetName) {
+  const records = [];
+  // 找表头行（含"国家"和"重量段"或"公斤重"）
+  let headerRow = -1;
+  let cC=-1, cName=-1, cW=-1, cF=-1, cFee=-1;
+  for (let i = 0; i < Math.min(data.length, 10); i++) {
+    const row = data[i] || [];
+    const vals = row.map(v => v != null ? String(v).trim() : '');
+    const joined = vals.join(' ');
+    if (joined.includes('国家') && (joined.includes('重量段') || joined.includes('公斤重'))) {
+      headerRow = i;
+      vals.forEach((v, k) => {
+        const vl = v.replace(/\n/g,' ');
+        if (vl.includes('国家') && cC === -1) cC = k;
+        if (vl.includes('产品名称') && cName === -1) cName = k;
+        if (vl.includes('重量段') && cW === -1) cW = k;
+        if ((vl.includes('公斤重') || vl.includes('RMB/KG')) && cF === -1) cF = k;
+        if ((vl.includes('操作费') || vl.includes('挂号费') || vl.includes('RMB/PCS')) && cFee === -1) cFee = k;
+      });
+      break;
+    }
+  }
+  if (headerRow === -1 || cF === -1 || cW === -1) return [];
+
+  let currentCountry = null;
+  let currentChannel = sheetName; // 默认用sheet名作渠道名
+
+  for (let i = headerRow + 1; i < data.length; i++) {
+    const row = data[i] || [];
+    const vals = row.map(v => v != null ? String(v).trim() : '');
+
+    // 更新国家（合并单元格向下填充）
+    if (cC >= 0 && isValidCountry(vals[cC])) currentCountry = vals[cC];
+    // 更新渠道名（产品名称列）
+    if (cName >= 0 && vals[cName] && vals[cName].length > 1 && vals[cName].length < 30) {
+      // 排除说明性内容
+      if (!['注意','说明','计费','服务','包裹','一.','二.','三.'].some(x => vals[cName].includes(x))) {
+        currentChannel = vals[cName];
+      }
+    }
+    if (!currentCountry) continue;
+
+    const wStr = vals[cW] || '';
+    const fStr = vals[cF] || '';
+    // 重量段格式：0-0.1KG / 0.101-0.2KG / 0-0.3KG
+    const w = parseWeightRange(wStr);
+    if (!w) continue;
+    const fMatch = fStr.match(/^\d+\.?\d*$/);
+    if (!fMatch) continue;
+    const freight = parseFloat(fStr);
+    if (!freight || freight <= 0) continue;
+    const feeStr = cFee >= 0 ? (vals[cFee] || '') : '';
+    const feeMatch = feeStr.match(/^\d+\.?\d*$/);
+    const fee = feeMatch ? parseFloat(feeStr) : 0;
+
+    records.push({
+      supplier: '万邦速达', channel: currentChannel, country: currentCountry,
+      weight_min: w.min, weight_max: w.max, freight_per_kg: freight, handling_fee: fee
+    });
+  }
+  return records;
+}
+
+// ── 供应商识别 ──
 function detectSupplier(filename, sheetNames) {
-  const fn=filename.toLowerCase(), all=sheetNames.join(' ');
-  if (fn.includes('远朋')||fn.includes('yuanpeng')) return '远朋供应链';
-  if (fn.includes('万邦')||fn.includes('wanbang')) return '万邦速达';
-  if (fn.includes('云途')||fn.includes('yuntu')||fn.includes('cn25753')||fn.includes('王淑华')) return '云途物流';
-  if (all.includes('普货小包')) return '远朋供应链';
-  if (all.includes('万邦')) return '万邦速达';
-  if (all.includes('云途')) return '云途物流';
-  return filename.split('.')[0].substring(0,10);
+  const fn = filename.toLowerCase();
+  const sheets = sheetNames.join(' ');
+  if (fn.includes('远朋') || fn.includes('yuanpeng') || sheets.includes('普货小包专线')) return '远朋供应链';
+  if (fn.includes('万邦') || fn.includes('wanbang') || sheets.includes('万邦')) return '万邦速达';
+  if (fn.includes('云途') || fn.includes('yuntu') || fn.includes('cn25753') || fn.includes('王淑华') || sheets.includes('云途')) return '云途物流';
+  return filename.split('.')[0].substring(0, 12);
+}
+
+// ── 跳过无效Sheet ──
+const SKIP_SHEETS = new Set([
+  '目录','报价总目录','目录国家维度','总目录','寄件须知','货物交接要求','托运条款',
+  '禁运品清单','尺寸表','异形件示例图','不可到地区清单','产品品牌表','欧洲国家对应税率表',
+  '易碎品包装要求','部分HS原关税','澳大利亚分区邮编','美国偏远邮编地区','DHL快递(香港)分区',
+  '保价服务','签名服务','库内增值服务','产品税率参考表','知识产权网','邮编明细',
+  '澳洲分区邮编','加拿大邮政-偏远邮编'
+]);
+
+function isDataSheet(sheetName) {
+  if (SKIP_SHEETS.has(sheetName)) return false;
+  // 跳过包含这些关键词的sheet
+  const skipKeywords = ['说明','须知','条款','禁运','偏远','邮编','分区','税率','品牌','包装','图','示例'];
+  return !skipKeywords.some(k => sheetName.includes(k));
 }
 
 function parseExcel(file) {
@@ -230,21 +369,32 @@ function parseExcel(file) {
     const reader = new FileReader();
     reader.onload = e => {
       try {
-        const wb = XLSX.read(e.target.result, {type:'array'});
+        const wb = XLSX.read(e.target.result, { type: 'array' });
         const supplier = detectSupplier(file.name, wb.SheetNames);
-        const skip = new Set(['目录','报价总目录','目录国家维度','总目录','寄件须知','货物交接要求','托运条款']);
         let records = [];
         for (const sh of wb.SheetNames) {
-          if (skip.has(sh)) continue;
+          if (!isDataSheet(sh)) continue;
           const ws = wb.Sheets[sh];
-          const data = XLSX.utils.sheet_to_json(ws, {header:1, defval:null});
-          if (!data||data.length<5) continue;
-          const r = supplier==='远朋供应链' ? parseYuanpeng(data,sh) : parseStandard(data,sh,supplier);
-          records = records.concat(r);
+          const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+          if (!data || data.length < 5) continue;
+          let sheetRecords = [];
+          if (supplier === '远朋供应链') {
+            sheetRecords = parseYuanpeng(data, sh);
+          } else if (supplier === '云途物流') {
+            sheetRecords = parseYuntu(data, sh, supplier);
+          } else if (supplier === '万邦速达') {
+            sheetRecords = parseWanbang(data, sh);
+          } else {
+            // 通用：先尝试远朋格式，再尝试云途格式
+            sheetRecords = parseYuanpeng(data, sh);
+            if (sheetRecords.length === 0) sheetRecords = parseYuntu(data, sh, supplier);
+            if (sheetRecords.length === 0) sheetRecords = parseWanbang(data, sh);
+          }
+          records = records.concat(sheetRecords);
         }
-        resolve({supplier, records, filename:file.name, ok:true});
-      } catch(err) {
-        resolve({supplier:file.name, records:[], filename:file.name, ok:false, err:err.message});
+        resolve({ supplier, records, filename: file.name, ok: true });
+      } catch (err) {
+        resolve({ supplier: file.name, records: [], filename: file.name, ok: false, err: err.message });
       }
     };
     reader.readAsArrayBuffer(file);
